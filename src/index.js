@@ -1,51 +1,6 @@
-const assetManifest = {};
-
-export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-
-    // 处理 WebSocket 连接
-    if (request.headers.get('Upgrade') === 'websocket') {
-      return handleWebSocket(request, env);
-    }
-    
-    // 添加 API 请求处理
-    if (url.pathname.endsWith("/chat/completions") ||
-        url.pathname.endsWith("/embeddings") ||
-        url.pathname.endsWith("/models")) {
-      return handleAPIRequest(request, env);
-    }
-
-    // 处理静态资源
-    if (url.pathname === '/' || url.pathname === '/index.html') {
-      console.log('Serving index.html',env);
-      return new Response(await env.__STATIC_CONTENT.get('index.html'), {
-        headers: {
-          'content-type': 'text/html;charset=UTF-8',
-        },
-      });
-    }
-
-    // 处理其他静态资源
-    const asset = await env.__STATIC_CONTENT.get(url.pathname.slice(1));
-    if (asset) {
-      const contentType = getContentType(url.pathname);
-      return new Response(asset, {
-        headers: {
-          'content-type': contentType,
-        },
-      });
-    }
-
-
-
-    return new Response('Not found', { status: 404 });
-  },
-};
-
-function getContentType(path) {
-  const ext = path.split('.').pop().toLowerCase();
-  const types = {
+const getContentType = (path: string): string => {
+  const ext = path.split('.').pop()?.toLowerCase() || '';
+  const types: Record<string, string> = {
     'js': 'application/javascript',
     'css': 'text/css',
     'html': 'text/html',
@@ -56,135 +11,70 @@ function getContentType(path) {
     'gif': 'image/gif'
   };
   return types[ext] || 'text/plain';
+};
+
+async function handleWebSocket(req: Request): Promise<Response> {
+  const { socket: clientWs, response } = Deno.upgradeWebSocket(req);
+  
+  const url = new URL(req.url);
+  const targetUrl = `wss://generativelanguage.googleapis.com${url.pathname}${url.search}`;
+  
+  console.log('Target URL:', targetUrl);
+  
+  const pendingMessages: string[] = [];
+  const targetWs = new WebSocket(targetUrl);
+  
+  targetWs.onopen = () => {
+    console.log('Connected to Gemini');
+    pendingMessages.forEach(msg => targetWs.send(msg));
+    pendingMessages.length = 0;
+  };
+
+  clientWs.onmessage = (event) => {
+    console.log('Client message received');
+    if (targetWs.readyState === WebSocket.OPEN) {
+      targetWs.send(event.data);
+    } else {
+      pendingMessages.push(event.data);
+    }
+  };
+
+  targetWs.onmessage = (event) => {
+    console.log('Gemini message received');
+    if (clientWs.readyState === WebSocket.OPEN) {
+      clientWs.send(event.data);
+    }
+  };
+
+  clientWs.onclose = (event) => {
+    console.log('Client connection closed');
+    if (targetWs.readyState === WebSocket.OPEN) {
+      targetWs.close(1000, event.reason);
+    }
+  };
+
+  targetWs.onclose = (event) => {
+    console.log('Gemini connection closed');
+    if (clientWs.readyState === WebSocket.OPEN) {
+      clientWs.close(event.code, event.reason);
+    }
+  };
+
+  targetWs.onerror = (error) => {
+    console.error('Gemini WebSocket error:', error);
+  };
+
+  return response;
 }
 
-async function handleWebSocket(request, env) {
-
-
-  if (request.headers.get("Upgrade") !== "websocket") {
-		return new Response("Expected WebSocket connection", { status: 400 });
-	}
-  
-	const url = new URL(request.url);
-	const pathAndQuery = url.pathname + url.search;
-	const targetUrl = `wss://generativelanguage.googleapis.com${pathAndQuery}`;
-	  
-	console.log('Target URL:', targetUrl);
-  
-  const [client, proxy] = new WebSocketPair();
-  proxy.accept();
-  
-   // 用于存储在连接建立前收到的消息
-   let pendingMessages = [];
-  
-   const targetWebSocket = new WebSocket(targetUrl);
- 
-   console.log('Initial targetWebSocket readyState:', targetWebSocket.readyState);
- 
-   targetWebSocket.addEventListener("open", () => {
-     console.log('Connected to target server');
-     console.log('targetWebSocket readyState after open:', targetWebSocket.readyState);
-     
-     // 连接建立后，发送所有待处理的消息
-     console.log(`Processing ${pendingMessages.length} pending messages`);
-     for (const message of pendingMessages) {
-      try {
-        targetWebSocket.send(message);
-        console.log('Sent pending message:', message);
-      } catch (error) {
-        console.error('Error sending pending message:', error);
-      }
-     }
-     pendingMessages = []; // 清空待处理消息队列
-   });
- 
-   proxy.addEventListener("message", async (event) => {
-     console.log('Received message from client:', {
-       dataPreview: typeof event.data === 'string' ? event.data.slice(0, 200) : 'Binary data',
-       dataType: typeof event.data,
-       timestamp: new Date().toISOString()
-     });
-     
-     console.log("targetWebSocket.readyState"+targetWebSocket.readyState)
-     if (targetWebSocket.readyState === WebSocket.OPEN) {
-        try {
-          targetWebSocket.send(event.data);
-          console.log('Successfully sent message to gemini');
-        } catch (error) {
-          console.error('Error sending to gemini:', error);
-        }
-     } else {
-       // 如果连接还未建立，将消息加入待处理队列
-       console.log('Connection not ready, queueing message');
-       pendingMessages.push(event.data);
-     }
-   });
- 
-   targetWebSocket.addEventListener("message", (event) => {
-     console.log('Received message from gemini:', {
-     dataPreview: typeof event.data === 'string' ? event.data.slice(0, 200) : 'Binary data',
-     dataType: typeof event.data,
-     timestamp: new Date().toISOString()
-     });
-     
-     try {
-     if (proxy.readyState === WebSocket.OPEN) {
-       proxy.send(event.data);
-       console.log('Successfully forwarded message to client');
-     }
-     } catch (error) {
-     console.error('Error forwarding to client:', error);
-     }
-   });
- 
-   targetWebSocket.addEventListener("close", (event) => {
-     console.log('Gemini connection closed:', {
-     code: event.code,
-     reason: event.reason || 'No reason provided',
-     wasClean: event.wasClean,
-     timestamp: new Date().toISOString(),
-     readyState: targetWebSocket.readyState
-     });
-     if (proxy.readyState === WebSocket.OPEN) {
-     proxy.close(event.code, event.reason);
-     }
-   });
- 
-   proxy.addEventListener("close", (event) => {
-     console.log('Client connection closed:', {
-     code: event.code,
-     reason: event.reason || 'No reason provided',
-     wasClean: event.wasClean,
-     timestamp: new Date().toISOString()
-     });
-     if (targetWebSocket.readyState === WebSocket.OPEN) {
-     targetWebSocket.close(event.code, event.reason);
-     }
-   });
- 
-   targetWebSocket.addEventListener("error", (error) => {
-     console.error('Gemini WebSocket error:', {
-     error: error.message || 'Unknown error',
-     timestamp: new Date().toISOString(),
-     readyState: targetWebSocket.readyState
-     });
-   });
-
- 
-   return new Response(null, {
-   status: 101,
-   webSocket: client,
-   });
-}
-
-async function handleAPIRequest(request, env) {
+async function handleAPIRequest(req: Request): Promise<Response> {
   try {
     const worker = await import('./api_proxy/worker.mjs');
-    return await worker.default.fetch(request);
+    return await worker.default.fetch(req);
   } catch (error) {
     console.error('API request error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    const errorStatus = error.status || 500;
+    const errorStatus = (error as { status?: number }).status || 500;
     return new Response(errorMessage, {
       status: errorStatus,
       headers: {
@@ -193,3 +83,99 @@ async function handleAPIRequest(request, env) {
     });
   }
 }
+
+async function handleGeminiDirectProxyRequest(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const targetUrl = `https://generativelanguage.googleapis.com${url.pathname}${url.search}`;
+  console.log('Direct Gemini Proxy Target URL:', targetUrl);
+
+  // 1. 从原始请求中提取 API Key
+  const auth = req.headers.get("Authorization");
+  const apiKey = auth?.split(" ")[1];
+
+  // 2. 创建新的请求头
+  const newHeaders = new Headers(req.headers);
+  newHeaders.delete('Host'); // 删除原始 Host
+  newHeaders.delete('Authorization'); // 删除原始 Authorization
+
+  // 3. 添加 Gemini API 需要的请求头
+  if (apiKey) {
+    newHeaders.set('x-goog-api-key', apiKey);
+  }
+  // 模仿 worker.mjs，添加 api-client 头
+  newHeaders.set('x-goog-api-client', 'genai-js/0.21.0');
+
+  try {
+    const response = await fetch(targetUrl, {
+      method: req.method,
+      headers: newHeaders, // 使用我们构造的新请求头
+      body: req.body,
+      redirect: 'manual',
+    });
+    return response;
+  } catch (error) {
+    console.error('Direct Gemini proxy request error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    const errorStatus = (error as { status?: number }).status || 500;
+    return new Response(errorMessage, {
+      status: errorStatus,
+      headers: {
+        'content-type': 'text/plain;charset=UTF-8',
+      }
+    });
+  }
+}
+
+async function handleRequest(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  console.log('Request URL:', req.url);
+
+  // WebSocket 处理
+  if (req.headers.get("Upgrade")?.toLowerCase() === "websocket") {
+    return handleWebSocket(req);
+  }
+
+  // Add condition for direct Gemini API paths
+  // Gemini API paths typically start with /v1 or /v1beta
+  if (url.pathname.startsWith("/v1") || url.pathname.startsWith("/v1beta")) {
+    console.log('Detected direct Gemini API request, proxying directly.');
+    return handleGeminiDirectProxyRequest(req);
+  }
+
+  // Existing check for OpenAI API paths
+  if (url.pathname.endsWith("/chat/completions") ||
+      url.pathname.endsWith("/embeddings") ||
+      url.pathname.endsWith("/models")) {
+    console.log('Detected OpenAI API request, delegating to worker.');
+    return handleAPIRequest(req);
+  }
+
+  // 静态文件处理
+  try {
+    let filePath = url.pathname;
+    if (filePath === '/' || filePath === '/index.html') {
+      filePath = '/index.html';
+    }
+
+    const fullPath = `${Deno.cwd()}/src/static${filePath}`;
+
+    const file = await Deno.readFile(fullPath);
+    const contentType = getContentType(filePath);
+
+    return new Response(file, {
+      headers: {
+        'content-type': `${contentType};charset=UTF-8`,
+      },
+    });
+  } catch (e) {
+    console.error('Error details:', e);
+    return new Response('Not Found', { 
+      status: 404,
+      headers: {
+        'content-type': 'text/plain;charset=UTF-8',
+      }
+    });
+  }
+}
+
+Deno.serve(handleRequest); 
