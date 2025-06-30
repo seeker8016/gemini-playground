@@ -84,6 +84,40 @@ async function handleAPIRequest(req: Request): Promise<Response> {
   }
 }
 
+async function handleGeminiDirectProxyRequest(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  // Construct the target URL for direct Gemini API calls
+  const targetUrl = `https://generativelanguage.googleapis.com${url.pathname}${url.search}`;
+  console.log('Direct Gemini Proxy Target URL:', targetUrl);
+
+  const newHeaders = new Headers(req.headers);
+  // It's generally good practice to remove the Host header when proxying,
+  // as the new host might be different.
+  newHeaders.delete('Host'); 
+  // Ensure Content-Length is handled by fetch, or explicitly removed if causing issues.
+  // newHeaders.delete('Content-Length'); 
+
+  try {
+    const response = await fetch(targetUrl, {
+      method: req.method,
+      headers: newHeaders,
+      body: req.body,
+      redirect: 'manual', // Prevents automatic redirects, allowing us to handle them if needed
+    });
+    return response;
+  } catch (error) {
+    console.error('Direct Gemini proxy request error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    const errorStatus = (error as { status?: number }).status || 500;
+    return new Response(errorMessage, {
+      status: errorStatus,
+      headers: {
+        'content-type': 'text/plain;charset=UTF-8',
+      }
+    });
+  }
+}
+
 async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
   console.log('Request URL:', req.url);
@@ -93,9 +127,18 @@ async function handleRequest(req: Request): Promise<Response> {
     return handleWebSocket(req);
   }
 
+  // Add condition for direct Gemini API paths
+  // Gemini API paths typically start with /v1 or /v1beta
+  if (url.pathname.startsWith("/v1") || url.pathname.startsWith("/v1beta")) {
+    console.log('Detected direct Gemini API request, proxying directly.');
+    return handleGeminiDirectProxyRequest(req);
+  }
+
+  // Existing check for OpenAI API paths
   if (url.pathname.endsWith("/chat/completions") ||
       url.pathname.endsWith("/embeddings") ||
       url.pathname.endsWith("/models")) {
+    console.log('Detected OpenAI API request, delegating to worker.');
     return handleAPIRequest(req);
   }
 
