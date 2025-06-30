@@ -1,6 +1,6 @@
-const getContentType = (path: string): string => {
+const getContentType = (path) => {
   const ext = path.split('.').pop()?.toLowerCase() || '';
-  const types: Record<string, string> = {
+  const types = {
     'js': 'application/javascript',
     'css': 'text/css',
     'html': 'text/html',
@@ -13,7 +13,7 @@ const getContentType = (path: string): string => {
   return types[ext] || 'text/plain';
 };
 
-async function handleWebSocket(req: Request): Promise<Response> {
+async function handleWebSocket(req) {
   const { socket: clientWs, response } = Deno.upgradeWebSocket(req);
   
   const url = new URL(req.url);
@@ -21,7 +21,7 @@ async function handleWebSocket(req: Request): Promise<Response> {
   
   console.log('Target URL:', targetUrl);
   
-  const pendingMessages: string[] = [];
+  const pendingMessages = [];
   const targetWs = new WebSocket(targetUrl);
   
   targetWs.onopen = () => {
@@ -67,14 +67,15 @@ async function handleWebSocket(req: Request): Promise<Response> {
   return response;
 }
 
-async function handleAPIRequest(req: Request): Promise<Response> {
+async function handleAPIRequest(req) {
   try {
-    const worker = await import('./api_proxy/worker.mjs');
+    // IMPORTANT: Path adjusted to be relative to the root index.js
+    const worker = await import('./src/api_proxy/worker.mjs');
     return await worker.default.fetch(req);
   } catch (error) {
     console.error('API request error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    const errorStatus = (error as { status?: number }).status || 500;
+    const errorStatus = (error).status || 500;
     return new Response(errorMessage, {
       status: errorStatus,
       headers: {
@@ -84,8 +85,10 @@ async function handleAPIRequest(req: Request): Promise<Response> {
   }
 }
 
-async function handleGeminiDirectProxyRequest(req: Request): Promise<Response> {
+async function handleGeminiDirectProxyRequest(req) {
   const url = new URL(req.url);
+  console.log(`[PROXY DEBUG] Incoming pathname: ${url.pathname}`);
+  console.log(`[PROXY DEBUG] Incoming search: ${url.search}`);
   const targetUrl = `https://generativelanguage.googleapis.com${url.pathname}${url.search}`;
   console.log('Direct Gemini Proxy Target URL:', targetUrl);
 
@@ -116,7 +119,7 @@ async function handleGeminiDirectProxyRequest(req: Request): Promise<Response> {
   } catch (error) {
     console.error('Direct Gemini proxy request error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    const errorStatus = (error as { status?: number }).status || 500;
+    const errorStatus = (error).status || 500;
     return new Response(errorMessage, {
       status: errorStatus,
       headers: {
@@ -126,8 +129,12 @@ async function handleGeminiDirectProxyRequest(req: Request): Promise<Response> {
   }
 }
 
-async function handleRequest(req: Request): Promise<Response> {
+async function handleRequest(req) {
   const url = new URL(req.url);
+  console.log(`--- New Request Received ---`);
+  console.log(`[REQUEST DEBUG] Full incoming URL: ${req.url}`);
+  console.log(`[REQUEST DEBUG] Method: ${req.method}`);
+  console.log(`[REQUEST DEBUG] Pathname: ${url.pathname}`);
   console.log('Request URL:', req.url);
 
   // WebSocket 处理
@@ -178,4 +185,4 @@ async function handleRequest(req: Request): Promise<Response> {
   }
 }
 
-Deno.serve(handleRequest); 
+Deno.serve(handleRequest);
