@@ -86,18 +86,21 @@ async function handleAPIRequest(req) {
 }
 
 async function handleGeminiDirectProxyRequest(req) {
+  console.log('--- ENTERING PROXY v3 ---'); // V3 of the code
   const url = new URL(req.url);
   let correctedPathname = url.pathname;
 
-  // 智能修复：检测并修正重复的版本路径
+  // 智能修复 v3：检测并修正重复的版本路径
   if (correctedPathname.includes('/v1/v1beta')) {
-    console.log(`[PROXY FIX] Detected duplicated version path. Correcting '${correctedPathname}'`);
+    console.log(`[PROXY FIX v3] Path before fix: '${correctedPathname}'`);
     correctedPathname = correctedPathname.replace('/v1/v1beta', '/v1beta');
-    console.log(`[PROXY FIX] Corrected path is now: '${correctedPathname}'`);
+    console.log(`[PROXY FIX v3] Path after fix: '${correctedPathname}'`);
+  } else {
+    console.log(`[PROXY v3] Path did not contain /v1/v1beta, no fix applied.`);
   }
 
   const targetUrl = `https://generativelanguage.googleapis.com${correctedPathname}${url.search}`;
-  console.log('Direct Gemini Proxy Target URL:', targetUrl);
+  console.log('[PROXY v3] Final Target URL:', targetUrl);
 
   // 1. 从原始请求中提取 API Key
   const auth = req.headers.get("Authorization");
